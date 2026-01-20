@@ -8,10 +8,7 @@ from bs4 import BeautifulSoup
 import json
 import time
 
-st.set_page_config(page_title="Asystent Wyceny", page_icon="📱")
-st.title("Asystent Wyceny Skupu 📱")
-
-url = st.text_input("Wklej link do produktu:", "https://skuptelefonow.pl/telefon/iphone-16-pro-256gb/")
+st.set_page_config(page_title="Wyceniarka", layout="wide")
 
 def get_driver():
     options = Options()
@@ -19,45 +16,40 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
     
-    # Ta linia automatycznie znajdzie Chromium na serwerze Streamlit
-    return webdriver.Chrome(
-        service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
-        options=options
-    )
+    # Próba uruchomienia z automatycznym pobraniem sterownika
+    service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
+    return webdriver.Chrome(service=service, options=options)
 
-if st.button("Pobierz aktualne ceny"):
-    with st.spinner('Uruchamiam silnik wyceny...'):
+st.title("Skup Urządzeń - Wyceń model 📱")
+
+url = st.text_input("Wklej link z kuptelefonow.pl:", "https://skuptelefonow.pl/telefon/iphone-16-pro-256gb/")
+
+if st.button("Sprawdź cenę konkurencji"):
+    with st.spinner("Bot pracuje..."):
         try:
             driver = get_driver()
             driver.get(url)
-            time.sleep(5) # Dajemy stronie czas na załadowanie cen
+            time.sleep(4)
             
-            html = driver.page_source
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # Szukanie danych wariacji
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
             form = soup.find('form', class_='variations_form')
             
-            if form and form.get('data-product_variations'):
+            if form:
                 variants = json.loads(form.get('data-product_variations'))
-                st.success(f"Znaleziono {len(variants)} wariantów stanu")
-                
                 for v in variants:
-                    stan = v['attributes'].get('attribute_pa_stan-produktu', 'Nieznany')
+                    stan = v['attributes'].get('attribute_pa_stan-produktu', 'Inny')
                     cena = v['display_price']
                     
-                    with st.container():
-                        c1, c2, c3 = st.columns([2,1,1])
-                        c1.subheader(stan.replace('-', ' ').upper())
-                        c2.metric("Cena skupu", f"{cena} zł")
-                        # Twoja propozycja (np. marża 15%)
-                        c3.metric("Twoja oferta", f"{round(cena * 0.85)} zł", delta="-15%")
-                        st.divider()
+                    with st.expander(f"STAN: {stan.upper()}"):
+                        c1, c2 = st.columns(2)
+                        c1.metric("Cena konkurencji", f"{cena} zł")
+                        c2.metric("Twoja cena (-200 zł)", f"{cena - 200} zł")
             else:
-                st.warning("Nie znaleziono wariantów cenowych. Sprawdź czy link jest poprawny.")
-                
+                st.error("Nie znaleziono wariantów. Sprawdź, czy na stronie są przyciski wyboru stanu.")
+            
             driver.quit()
         except Exception as e:
-            st.error(f"Błąd krytyczny: {str(e)}")
+            st.error(f"Szczegóły błędu dla programisty: {e}")
