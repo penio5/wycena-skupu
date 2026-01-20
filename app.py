@@ -6,8 +6,7 @@ from bs4 import BeautifulSoup
 import json
 import time
 
-# Ustawienia strony
-st.set_page_config(page_title="Wyceniarka", layout="centered")
+st.set_page_config(page_title="Wyceniarka", layout="wide")
 
 def get_driver():
     options = Options()
@@ -23,12 +22,12 @@ st.title("Szybka Wycena Odkupu 📱")
 url = st.text_input("Wklej link do modelu:", "https://skuptelefonow.pl/telefon/iphone-16-pro-256gb/")
 
 if st.button("Pobierz konkrety"):
-    with st.spinner("Filtruję dane..."):
+    with st.spinner("Przeszukuję bazę danych produktu..."):
         driver = None
         try:
             driver = get_driver()
             driver.get(url)
-            time.sleep(4)
+            time.sleep(5)
             
             soup = BeautifulSoup(driver.page_source, 'html.parser')
             form = soup.find('form', class_='variations_form')
@@ -36,36 +35,42 @@ if st.button("Pobierz konkrety"):
             if form:
                 all_variants = json.loads(form.get('data-product_variations'))
                 
-                st.subheader("Wyniki dla: Kupiony w Inna / System ratalny: NIE")
+                st.subheader("Filtry: Kupiony w 'inna' | System ratalny: 'Nie'")
                 
-                found = False
+                found_any = False
                 for v in all_variants:
                     attr = v['attributes']
                     
-                    # FILTRY: Interesują nas tylko te warianty
-                    is_inna = attr.get('attribute_pa_kupiony-w') == 'inna'
-                    is_not_raty = attr.get('attribute_pa_system-ratalny') == 'nie'
+                    # Pobieramy wartości filtrów (małe litery dla pewności porównania)
+                    sklep = str(attr.get('attribute_pa_kupiony-w', '')).lower()
+                    raty = str(attr.get('attribute_pa_system-ratalny', '')).lower()
+                    stan_surowy = attr.get('attribute_pa_stan-produktu', 'Nieznany')
                     
-                    if is_inna and is_not_raty:
-                        found = True
-                        stan = attr.get('attribute_pa_stan-produktu', 'Nieznany').replace('-', ' ').upper()
+                    # Sprawdzamy czy wariant pasuje (inna i nie-raty)
+                    if sklep == 'inna' and raty == 'nie':
+                        found_any = True
                         cena = float(v['display_price'])
                         
-                        # Wyświetlanie w czytelny sposób
+                        # Ładny podgląd wyników
                         with st.container():
                             c1, c2, c3 = st.columns([2, 1, 1])
-                            c1.info(f"**STAN: {stan}**")
-                            c2.metric("Skup", f"{cena} zł")
-                            # Automatyczne liczenie Twojej ceny (np. 10% marży)
-                            c3.metric("Twoja oferta", f"{round(cena * 0.90)} zł")
+                            nazwa_stanu = stan_surowy.replace('-', ' ').upper()
+                            c1.success(f"📍 {nazwa_stanu}")
+                            c2.metric("Skup Konkurencji", f"{cena} zł")
+                            # Przykładowa marża: Twoja oferta to cena skupu - 10%
+                            twoja_cena = round(cena * 0.90)
+                            c3.metric("Twoja Oferta", f"{twoja_cena} zł", delta=f"-{int(cena-twoja_cena)} zł")
+                            st.divider()
                 
-                if not found:
-                    st.warning("Nie znaleziono wariantów pasujących do filtrów (Inna/Brak rat).")
+                if not found_any:
+                    st.warning("Znalazłem produkt, ale żadna z opcji nie pasuje do filtrów 'Inna' + 'Nie'.")
+                    with st.expander("Zobacz co widzi robot (debug)"):
+                        st.write(all_variants[0]['attributes'] if all_variants else "Brak wariantów")
             else:
-                st.error("Nie udało się pobrać danych. Upewnij się, że link jest poprawny.")
+                st.error("Nie znaleziono danych technicznych na stronie. Upewnij się, że to link do produktu z opcjami wyboru.")
                 
         except Exception as e:
-            st.error(f"Błąd: {e}")
+            st.error(f"Wystąpił błąd: {e}")
         finally:
             if driver:
                 driver.quit()
