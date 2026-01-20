@@ -7,16 +7,9 @@ import json
 import time
 import pandas as pd
 
-st.set_page_config(page_title="Multi-Skup PRO", layout="wide")
+st.set_page_config(page_title="Monitor Skupów", layout="wide")
 
-# CSS dla lepszego wyglądu na mobile (mniejsze czcionki)
-st.markdown("""
-    <style>
-    .stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 10px; }
-    [data-testid="stMetricValue"] { font-size: 1.5rem !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
+# --- FUNKCJE SCRAPERA ---
 def get_driver():
     options = Options()
     options.add_argument("--headless")
@@ -26,79 +19,58 @@ def get_driver():
     service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
-st.title("📊 Porównywarka Skupów")
+def scrapuj_skup_telefonow(driver, url):
+    try:
+        driver.get(url)
+        time.sleep(3)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        form = soup.find('form', class_='variations_form')
+        if not form: return None
+        
+        variants = json.loads(form.get('data-product_variations'))
+        results = {}
+        for v in variants:
+            attr = v['attributes']
+            # Filtr: Inna + Brak rat
+            raty = str(attr.get('attribute_pa_system-ratalny', '')).lower()
+            sklep = str(attr.get('attribute_pa_kupiony-w', '')).lower()
+            if raty == 'nie' and sklep == 'inna':
+                stan = str(attr.get('attribute_pa_wybierz-stan', attr.get('attribute_pa_stan-produktu', ''))).upper()
+                results[stan] = float(v['display_price'])
+        return results
+    except: return None
 
-# Panel boczny na Twoje ustawienia
-with st.sidebar:
-    st.header("Ustawienia Marży")
-    marza_procent = st.slider("Twoja marża (%)", 5, 30, 12)
-    st.info("Aplikacja odejmie ten % od najwyższej ceny skupu.")
+# --- INTERFEJS ---
+st.title("📈 Twój Monitor Cen Skupu")
 
-# Lista linków do sprawdzenia (możesz tu dodać więcej pol w przyszłości)
-link_skup = st.text_input("Link SkupTelefonow.pl:", "https://skuptelefonow.pl/telefon/iphone-16-pro-256gb/")
+# Prosta baza danych w pamięci sesji (można rozbudować o plik)
+if 'baza_linkow' not in st.session_state:
+    st.session_state.baza_linkow = []
 
-if st.button("🚀 Porównaj Ceny"):
-    with st.spinner("Pobieram dane z wielu źródeł..."):
-        driver = None
-        try:
-            driver = get_driver()
-            driver.get(link_skup)
-            time.sleep(4)
+with st.expander("➕ Dodaj nowy model do porównania"):
+    nazwa = st.text_input("Nazwa urządzenia (np. iPhone 16 Pro)")
+    link1 = st.text_input("Link SkupTelefonow.pl")
+    link2 = st.text_input("Link ElektroSkup.pl (lub inny)")
+    if st.button("Zapisz w bazie"):
+        st.session_state.baza_linkow.append({"nazwa": nazwa, "skup_tel": link1, "elektro": link2})
+        st.success("Dodano!")
+
+if st.session_state.baza_linkow:
+    st.subheader("Twoja Lista Monitorowania")
+    for i, item in enumerate(st.session_state.baza_linkow):
+        st.write(f"{i+1}. **{item['nazwa']}**")
+    
+    if st.button("🚀 ODPAL MONITORING WSZYSTKICH CEN"):
+        all_results = []
+        driver = get_driver()
+        progress = st.progress(0)
+        
+        for idx, item in enumerate(st.session_state.baza_linkow):
+            st.write(f"Sprawdzam: {item['nazwa']}...")
             
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            form = soup.find('form', class_='variations_form')
+            # Pobieramy dane ze SkupTelefonow
+            ceny_skup = scrapuj_skup_telefonow(driver, item['skup_tel'])
             
-            if form:
-                all_variants = json.loads(form.get('data-product_variations'))
-                data_rows = []
-
-                for v in all_variants:
-                    attr = v['attributes']
-                    
-                    # FILTR: Pomijaj jeśli system ratalny to "tak"
-                    raty = str(attr.get('attribute_pa_system-ratalny', '')).lower()
-                    if raty == 'tak':
-                        continue
-                    
-                    # Wyciągamy stan i sklep (kupiony w)
-                    stan = str(attr.get('attribute_pa_wybierz-stan', attr.get('attribute_pa_stan-produktu', ''))).replace('-', ' ').upper()
-                    sklep = str(attr.get('attribute_pa_kupiony-w', 'INNA')).upper()
-                    cena = float(v['display_price'])
-                    
-                    # Liczymy Twoją cenę
-                    twoja_oferta = round(cena * (1 - marza_procent/100))
-                    
-                    data_rows.append({
-                        "STAN": stan,
-                        "SKLEP / POCHODZENIE": sklep,
-                        "CENA SKUPU (PLN)": int(cena),
-                        "TWOJA OFERTA (PLN)": twoja_oferta
-                    })
-
-                # Tworzymy czytelną tabelę (DataFrame)
-                df = pd.DataFrame(data_rows)
-                
-                # Sortowanie, żeby najlepsze stany były na górze
-                if not df.empty:
-                    st.success("✅ Dane pobrane i przefiltrowane")
-                    
-                    # Wyświetlanie tabeli zamiast wielkich kafelków
-                    st.table(df)
-                    
-                    # Podsumowanie pod tabelą w formie kolumn
-                    st.subheader("Szybki podgląd (Najwyższe ceny)")
-                    cols = st.columns(len(df['STAN'].unique()[:3])) # Max 3 stany
-                    for i, row in df.head(len(cols)).iterrows():
-                        cols[i].metric(row['STAN'], f"{row['CENA SKUPU (PLN)']} zł", f"Twoja: {row['TWOJA OFERTA (PLN)']} zł")
-                
-            else:
-                st.error("Błąd pobierania wariantów.")
-                
-        except Exception as e:
-            st.error(f"Błąd: {e}")
-        finally:
-            if driver:
-                driver.quit()
-
-st.markdown("---")
-st.caption("Tip: Używaj suwaka w menu bocznym, aby szybko zmieniać swoje ceny dla klienta.")
+            if ceny_skup:
+                for stan, cena in ceny_skup.items():
+                    all_
